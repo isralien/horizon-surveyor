@@ -121,13 +121,18 @@ worth checking on first use:
    per-device reading, the registration/drag scale will be off (horizon
    shape looks stretched or compressed vertically vs. what you saw live).
 4. **Preview snapshot cost.** Panorama strips come from
-   `PreviewView.getBitmap()`, called every degree of rotation (throttled,
-   not every frame) rather than a raw camera analysis stream — simpler and
-   correctness-safe (no manual sensor-buffer rotation math to get wrong),
-   but it's documented as a relatively expensive call, and this is now
-   called quite frequently (see next point). If panning feels janky,
-   increase `captureIntervalDeg` in `PanoramaBuilder`'s constructor to call
-   it less often — at the cost of chunkier registration steps, below.
+   `PreviewView.getBitmap()`, a documented-expensive, main-thread call.
+   It's throttled two ways: an angle threshold (`captureIntervalDeg`, so
+   slow/careful panning gets fine resolution) and a hard wall-clock floor
+   (`minCaptureIntervalMs`, default 150ms) that caps the absolute call rate
+   no matter how fast someone pans. The time floor is the one that actually
+   matters for not hanging the UI — an earlier version only had the angle
+   throttle, so panning fast enough (or the call itself being slower on some
+   device than expected) could queue this expensive call up faster than the
+   main thread could drain it, which read as the whole screen freezing.
+   If capture still feels janky or unresponsive on real hardware, raising
+   `minCaptureIntervalMs` is the first lever to pull, before touching
+   `captureIntervalDeg`.
 5. **Registration seams.** Each strip is vertically shifted as a rigid
    block with no blending at the seam against its neighbor, so any jump in
    the pitch reading between two consecutive captures shows as a visible

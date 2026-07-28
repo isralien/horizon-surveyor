@@ -2,6 +2,7 @@ package com.astroremix.horizonsurvey
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.os.SystemClock
 import com.astroremix.horizonsurvey.core.PanoramaGeometry
 
 /**
@@ -29,8 +30,17 @@ class PanoramaBuilder(
     // Deliberately fine-grained: each strip's vertical registration shift is
     // an independent block offset with no blending at the seam (see
     // addStrip), so wider strips make any shift between neighbors read as a
-    // chunky, stepped "fan" rather than a fine, near-invisible stagger.
+    // chunky, stepped "fan" rather than a fine, near-invisible stagger. This
+    // alone doesn't bound how *often* a strip fires, though -- panning
+    // faster covers more degrees per second, so angle-only throttling can
+    // still fire arbitrarily fast. minCaptureIntervalMs below is what
+    // actually caps the rate.
     private val captureIntervalDeg: Double = 1.0,
+    // Hard floor on time between captures, regardless of pan speed.
+    // PreviewView.getBitmap() is a documented-expensive, main-thread call;
+    // without this, fast panning can queue it up faster than it can drain,
+    // which reads as the whole UI hanging.
+    private val minCaptureIntervalMs: Long = 150,
     val panoramaHeightPx: Int = 400,
     private val maxPitchRangeDeg: Double = 25.0,
 ) {
@@ -45,6 +55,7 @@ class PanoramaBuilder(
     private var startAzimuthDeg = 0.0
     private var lastRawAzimuthDeg = 0.0
     private var lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
+    private var lastCaptureTimeMs = 0L
     private val _markers = mutableListOf<Marker>()
     val markers: List<Marker> get() = _markers
 
@@ -69,6 +80,7 @@ class PanoramaBuilder(
         globalReferenceAltitudeDeg = currentAltitudeDeg
         traveledDeg = 0.0
         lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
+        lastCaptureTimeMs = 0L
         _markers.clear()
 
         val paddingPx = PanoramaGeometry.verticalPaddingPx(maxPitchRangeDeg, panoramaHeightPx, verticalFovDeg)
@@ -87,11 +99,18 @@ class PanoramaBuilder(
         _markers.clear()
     }
 
-    /** Feed a new orientation reading; returns true when enough rotation has accrued to capture another strip. */
+    /**
+     * Feed a new orientation reading; returns true when enough rotation has
+     * accrued *and* enough wall-clock time has passed since the last capture
+     * (see [minCaptureIntervalMs]) -- both must hold, so fast panning is
+     * throttled by time rather than firing every sensor tick.
+     */
     fun onOrientationUpdate(azimuthDeg: Double): Boolean {
         traveledDeg += PanoramaGeometry.shortestAngleDelta(lastRawAzimuthDeg, azimuthDeg)
         lastRawAzimuthDeg = azimuthDeg
-        return traveledDeg - lastCaptureTraveledDeg >= captureIntervalDeg
+        val enoughAngle = traveledDeg - lastCaptureTraveledDeg >= captureIntervalDeg
+        val enoughTime = SystemClock.elapsedRealtime() - lastCaptureTimeMs >= minCaptureIntervalMs
+        return enoughAngle && enoughTime
     }
 
     /**
@@ -125,5 +144,6 @@ class PanoramaBuilder(
         val azimuthDeg = PanoramaGeometry.azimuthForXPx(xPx, startAzimuthDeg, pixelsPerDegree)
         _markers.add(Marker(xPx, azimuthDeg).apply { yPx = markerY })
         lastCaptureTraveledDeg = traveledDeg
+        lastCaptureTimeMs = SystemClock.elapsedRealtime()
     }
 }
