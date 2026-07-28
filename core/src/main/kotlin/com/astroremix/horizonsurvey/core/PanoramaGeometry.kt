@@ -50,4 +50,30 @@ object PanoramaGeometry {
      */
     fun verticalPaddingPx(maxPitchRangeDeg: Double, stripHeightPx: Int, verticalFovDeg: Double): Int =
         (maxPitchRangeDeg / verticalFovDeg * stripHeightPx).roundToInt()
+
+    /** One horizontal slice of a strip, drawn at its own interpolated vertical offset. */
+    data class SubColumn(val srcXStart: Int, val srcXEnd: Int, val drawY: Double)
+
+    /**
+     * Splits a strip of [stripWidthPx] into slices no wider than
+     * [maxSubColumnWidthPx], each assigned a vertical draw offset linearly
+     * interpolated between [fromDrawY] (this strip's left edge, matching
+     * where the previous strip left off) and [toDrawY] (this strip's own
+     * registered offset). Drawing each slice at its own offset -- rather
+     * than the whole strip as one rigid block -- turns a hard vertical step
+     * between neighboring strips into a smooth ramp, regardless of how wide
+     * the strip ends up being.
+     */
+    fun interpolatedSubColumns(stripWidthPx: Int, maxSubColumnWidthPx: Int, fromDrawY: Double, toDrawY: Double): List<SubColumn> {
+        if (stripWidthPx <= 0) return emptyList()
+        val columns = mutableListOf<SubColumn>()
+        var x = 0
+        while (x < stripWidthPx) {
+            val width = minOf(maxSubColumnWidthPx, stripWidthPx - x)
+            val t = if (stripWidthPx <= 1) 1.0 else (x + width / 2.0) / stripWidthPx
+            columns.add(SubColumn(x, x + width, fromDrawY + (toDrawY - fromDrawY) * t))
+            x += width
+        }
+        return columns
+    }
 }

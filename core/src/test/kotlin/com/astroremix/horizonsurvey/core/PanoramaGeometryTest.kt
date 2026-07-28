@@ -2,6 +2,7 @@ package com.astroremix.horizonsurvey.core
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class PanoramaGeometryTest {
 
@@ -97,5 +98,50 @@ class PanoramaGeometryTest {
     fun `verticalPaddingPx scales pitch range into pixels using the strip's own degrees-per-pixel`() {
         // 25 degrees of padding at 400px representing 50 degrees of FOV = 8px per degree.
         assertEquals(200, PanoramaGeometry.verticalPaddingPx(maxPitchRangeDeg = 25.0, stripHeightPx = 400, verticalFovDeg = 50.0))
+    }
+
+    @Test
+    fun `interpolatedSubColumns tiles the full strip width with no gaps or overlaps`() {
+        val columns = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 37, maxSubColumnWidthPx = 4, fromDrawY = 0.0, toDrawY = 100.0)
+        assertEquals(0, columns.first().srcXStart)
+        assertEquals(37, columns.last().srcXEnd)
+        for (i in 1 until columns.size) {
+            assertEquals(columns[i - 1].srcXEnd, columns[i].srcXStart) // no gap and no overlap
+        }
+        assertTrue(columns.all { it.srcXEnd - it.srcXStart <= 4 })
+    }
+
+    @Test
+    fun `interpolatedSubColumns ramps monotonically from fromDrawY towards toDrawY`() {
+        val rising = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 40, maxSubColumnWidthPx = 4, fromDrawY = 10.0, toDrawY = 50.0)
+        for (i in 1 until rising.size) {
+            assertTrue(rising[i].drawY >= rising[i - 1].drawY) // never overshoots or reverses
+        }
+        assertTrue(rising.first().drawY in 10.0..50.0)
+        assertTrue(rising.last().drawY in 10.0..50.0)
+
+        val falling = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 40, maxSubColumnWidthPx = 4, fromDrawY = 50.0, toDrawY = 10.0)
+        for (i in 1 until falling.size) {
+            assertTrue(falling[i].drawY <= falling[i - 1].drawY)
+        }
+    }
+
+    @Test
+    fun `interpolatedSubColumns handles a strip narrower than one sub-column`() {
+        val columns = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 1, maxSubColumnWidthPx = 4, fromDrawY = 0.0, toDrawY = 20.0)
+        assertEquals(1, columns.size)
+        assertEquals(0, columns[0].srcXStart)
+        assertEquals(1, columns[0].srcXEnd)
+    }
+
+    @Test
+    fun `interpolatedSubColumns with equal endpoints draws every slice at the same row`() {
+        val columns = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 20, maxSubColumnWidthPx = 4, fromDrawY = 42.0, toDrawY = 42.0)
+        assertTrue(columns.all { it.drawY == 42.0 })
+    }
+
+    @Test
+    fun `interpolatedSubColumns returns nothing for a non-positive width`() {
+        assertEquals(emptyList(), PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 0, maxSubColumnWidthPx = 4, fromDrawY = 0.0, toDrawY = 10.0))
     }
 }

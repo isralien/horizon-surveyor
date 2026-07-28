@@ -2,6 +2,8 @@ package com.astroremix.horizonsurvey
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
+import android.graphics.RectF
 import android.os.SystemClock
 import com.astroremix.horizonsurvey.core.PanoramaGeometry
 
@@ -56,6 +58,7 @@ class PanoramaBuilder(
     private var lastRawAzimuthDeg = 0.0
     private var lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
     private var lastCaptureTimeMs = 0L
+    private var lastDrawY: Double? = null
     private val _markers = mutableListOf<Marker>()
     val markers: List<Marker> get() = _markers
 
@@ -81,6 +84,7 @@ class PanoramaBuilder(
         traveledDeg = 0.0
         lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
         lastCaptureTimeMs = 0L
+        lastDrawY = null
         _markers.clear()
 
         val paddingPx = PanoramaGeometry.verticalPaddingPx(maxPitchRangeDeg, panoramaHeightPx, verticalFovDeg)
@@ -118,8 +122,14 @@ class PanoramaBuilder(
      * the panorama, filling all the way back to the previous capture's edge so
      * bursty pan speed never leaves a gap. The strip is shifted vertically so
      * its content lines up against [globalReferenceAltitudeDeg], using
-     * [altitudeDeg] (the phone's current pitch) and [verticalFovDeg]; a
-     * [Marker] is recorded at the resulting row.
+     * [altitudeDeg] (the phone's current pitch) and [verticalFovDeg]. Rather
+     * than pasting the whole strip as one rigid block at that offset, it's
+     * drawn in narrow sub-columns whose vertical position ramps smoothly from
+     * where the previous strip left off to this strip's own offset -- so a
+     * jump in the pitch reading between captures shows as a gentle slope
+     * instead of a hard step, regardless of how wide the strip itself is
+     * (which depends on pan speed and the capture throttle, not something
+     * this method controls). A [Marker] is recorded at the resulting row.
      */
     fun addStrip(sourceBitmap: Bitmap, altitudeDeg: Double, verticalFovDeg: Double) {
         val targetCanvas = canvas ?: return
@@ -137,13 +147,28 @@ class PanoramaBuilder(
         val cropLeft = ((sourceBitmap.width - stripWidth) / 2).coerceIn(0, sourceBitmap.width - stripWidth)
         val rawStrip = Bitmap.createBitmap(sourceBitmap, cropLeft, 0, stripWidth, sourceBitmap.height)
         val scaledStrip = Bitmap.createScaledBitmap(rawStrip, stripWidth, panoramaHeightPx, true)
-        targetCanvas.drawBitmap(scaledStrip, prevX.toFloat(), drawY.toFloat(), null)
+
+        val fromDrawY = lastDrawY ?: drawY
+        for (column in PanoramaGeometry.interpolatedSubColumns(stripWidth, SUB_COLUMN_WIDTH_PX, fromDrawY, drawY)) {
+            val srcRect = Rect(column.srcXStart, 0, column.srcXEnd, panoramaHeightPx)
+            val dstLeft = (prevX + column.srcXStart).toFloat()
+            val dstRect = RectF(
+                dstLeft, column.drawY.toFloat(),
+                dstLeft + (column.srcXEnd - column.srcXStart), (column.drawY + panoramaHeightPx).toFloat(),
+            )
+            targetCanvas.drawBitmap(scaledStrip, srcRect, dstRect, null)
+        }
         rawStrip.recycle()
         scaledStrip.recycle()
+        lastDrawY = drawY
 
         val azimuthDeg = PanoramaGeometry.azimuthForXPx(xPx, startAzimuthDeg, pixelsPerDegree)
         _markers.add(Marker(xPx, azimuthDeg).apply { yPx = markerY })
         lastCaptureTraveledDeg = traveledDeg
         lastCaptureTimeMs = SystemClock.elapsedRealtime()
+    }
+
+    private companion object {
+        const val SUB_COLUMN_WIDTH_PX = 3
     }
 }

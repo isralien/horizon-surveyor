@@ -133,18 +133,25 @@ worth checking on first use:
    If capture still feels janky or unresponsive on real hardware, raising
    `minCaptureIntervalMs` is the first lever to pull, before touching
    `captureIntervalDeg`.
-5. **Registration seams.** Each strip is vertically shifted as a rigid
-   block with no blending at the seam against its neighbor, so any jump in
-   the pitch reading between two consecutive captures shows as a visible
-   step in the photo, not just a smooth curve. Two things keep this in
-   check: `OrientationTracker` applies light exponential smoothing to the
-   altitude reading specifically to damp sample-to-sample sensor jitter
-   (`ALTITUDE_SMOOTHING_FACTOR`), and `captureIntervalDeg` defaults to a
-   fine 1° so any remaining stagger between strips is only a few pixels —
-   meant to read as a faint stair-step rather than a chunky "fan" of
-   visibly offset blocks. If it still looks chunky on real hardware, the
-   next lever to pull is lowering `captureIntervalDeg` further (more,
-   thinner strips) before reaching for actual seam blending.
+5. **Registration seams.** Early versions pasted each strip as one rigid
+   block at its registered vertical offset, so any jump in the pitch
+   reading between two consecutive captures showed as a hard step in the
+   photo — and since `minCaptureIntervalMs` (above) bounds how *often*
+   strips can be captured, strips can end up fairly wide under normal
+   panning speed, which made those steps read as a chunky, visibly offset
+   "fan" rather than a fine stagger. Tuning capture frequency against the
+   hang-prevention throttle turned out to be a losing trade, so
+   `addStrip()` now draws each strip in narrow (`SUB_COLUMN_WIDTH_PX`, 3px)
+   sub-columns whose vertical offset ramps linearly from where the previous
+   strip left off to this strip's own offset, instead of one constant
+   offset for the whole width — turning a hard step into a smooth ramp
+   regardless of strip width. `OrientationTracker`'s altitude smoothing
+   (`ALTITUDE_SMOOTHING_FACTOR`) still helps by damping the sensor jitter
+   that drives those jumps in the first place. The ramping math
+   (`PanoramaGeometry.interpolatedSubColumns`) is unit-tested; the
+   Bitmap/Canvas drawing loop that uses it is not (no Android runtime
+   here), so this is the next thing to check if the photo still looks
+   stepped on real hardware.
 6. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
    (`CONTROL_AE_LOCK` / `CONTROL_AWB_LOCK` via Camera2 interop) to stop
    consecutive strips from visibly banding as the camera's exposure drifts
