@@ -26,7 +26,11 @@ import com.astroremix.horizonsurvey.core.PanoramaGeometry
  */
 class PanoramaBuilder(
     private val pixelsPerDegree: Int = 6,
-    private val captureIntervalDeg: Double = 3.0,
+    // Deliberately fine-grained: each strip's vertical registration shift is
+    // an independent block offset with no blending at the seam (see
+    // addStrip), so wider strips make any shift between neighbors read as a
+    // chunky, stepped "fan" rather than a fine, near-invisible stagger.
+    private val captureIntervalDeg: Double = 1.0,
     val panoramaHeightPx: Int = 400,
     private val maxPitchRangeDeg: Double = 25.0,
 ) {

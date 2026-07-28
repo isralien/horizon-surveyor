@@ -31,6 +31,14 @@ class OrientationTracker(context: Context) : SensorEventListener {
 
     private companion object {
         const val INVERT_ALTITUDE = false
+
+        // Exponential moving average factor for the altitude reading: lower
+        // = smoother but slower to react. Raw altitude is noisy enough,
+        // sample to sample, to visibly stagger the panorama's strip
+        // registration (see PanoramaBuilder) if used unsmoothed -- this
+        // damps that jitter while still tracking real, slower elevation
+        // changes across a horizon within a capture or two.
+        const val ALTITUDE_SMOOTHING_FACTOR = 0.15
     }
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -39,6 +47,7 @@ class OrientationTracker(context: Context) : SensorEventListener {
     private val rotationMatrix = FloatArray(9)
     private val remappedMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
+    private var smoothedAltitudeDeg: Double? = null
 
     /** Correction added to magnetic azimuth to report true-north azimuth. Never persisted. */
     var declinationDeg: Float = 0f
@@ -84,8 +93,16 @@ class OrientationTracker(context: Context) : SensorEventListener {
         val magneticAzimuthDeg = Math.toDegrees(orientationAngles[0].toDouble())
         val trueAzimuthDeg = (magneticAzimuthDeg + declinationDeg + 360.0) % 360.0
 
-        var altitudeDeg = Math.toDegrees(orientationAngles[1].toDouble())
-        if (INVERT_ALTITUDE) altitudeDeg = -altitudeDeg
+        var rawAltitudeDeg = Math.toDegrees(orientationAngles[1].toDouble())
+        if (INVERT_ALTITUDE) rawAltitudeDeg = -rawAltitudeDeg
+
+        val previous = smoothedAltitudeDeg
+        val altitudeDeg = if (previous == null) {
+            rawAltitudeDeg
+        } else {
+            previous + ALTITUDE_SMOOTHING_FACTOR * (rawAltitudeDeg - previous)
+        }
+        smoothedAltitudeDeg = altitudeDeg
 
         listener?.onOrientationChanged(trueAzimuthDeg, altitudeDeg)
     }

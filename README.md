@@ -121,13 +121,26 @@ worth checking on first use:
    per-device reading, the registration/drag scale will be off (horizon
    shape looks stretched or compressed vertically vs. what you saw live).
 4. **Preview snapshot cost.** Panorama strips come from
-   `PreviewView.getBitmap()`, called every few degrees of rotation
-   (throttled, not every frame) rather than a raw camera analysis stream —
-   simpler and correctness-safe (no manual sensor-buffer rotation math to
-   get wrong), but it's documented as a relatively expensive call. If
-   panning feels janky, increase `captureIntervalDeg` in
-   `PanoramaBuilder`'s constructor to call it less often.
-5. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
+   `PreviewView.getBitmap()`, called every degree of rotation (throttled,
+   not every frame) rather than a raw camera analysis stream — simpler and
+   correctness-safe (no manual sensor-buffer rotation math to get wrong),
+   but it's documented as a relatively expensive call, and this is now
+   called quite frequently (see next point). If panning feels janky,
+   increase `captureIntervalDeg` in `PanoramaBuilder`'s constructor to call
+   it less often — at the cost of chunkier registration steps, below.
+5. **Registration seams.** Each strip is vertically shifted as a rigid
+   block with no blending at the seam against its neighbor, so any jump in
+   the pitch reading between two consecutive captures shows as a visible
+   step in the photo, not just a smooth curve. Two things keep this in
+   check: `OrientationTracker` applies light exponential smoothing to the
+   altitude reading specifically to damp sample-to-sample sensor jitter
+   (`ALTITUDE_SMOOTHING_FACTOR`), and `captureIntervalDeg` defaults to a
+   fine 1° so any remaining stagger between strips is only a few pixels —
+   meant to read as a faint stair-step rather than a chunky "fan" of
+   visibly offset blocks. If it still looks chunky on real hardware, the
+   next lever to pull is lowering `captureIntervalDeg` further (more,
+   thinner strips) before reaching for actual seam blending.
+6. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
    (`CONTROL_AE_LOCK` / `CONTROL_AWB_LOCK` via Camera2 interop) to stop
    consecutive strips from visibly banding as the camera's exposure drifts
    mid-pan. This should be broadly supported, but isn't verified on real
