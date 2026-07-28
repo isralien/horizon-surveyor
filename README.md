@@ -121,37 +121,48 @@ worth checking on first use:
    per-device reading, the registration/drag scale will be off (horizon
    shape looks stretched or compressed vertically vs. what you saw live).
 4. **Preview snapshot cost.** Panorama strips come from
-   `PreviewView.getBitmap()`, a documented-expensive, main-thread call.
-   It's throttled two ways: an angle threshold (`captureIntervalDeg`, so
-   slow/careful panning gets fine resolution) and a hard wall-clock floor
-   (`minCaptureIntervalMs`, default 150ms) that caps the absolute call rate
-   no matter how fast someone pans. The time floor is the one that actually
-   matters for not hanging the UI — an earlier version only had the angle
-   throttle, so panning fast enough (or the call itself being slower on some
-   device than expected) could queue this expensive call up faster than the
-   main thread could drain it, which read as the whole screen freezing.
-   If capture still feels janky or unresponsive on real hardware, raising
-   `minCaptureIntervalMs` is the first lever to pull, before touching
-   `captureIntervalDeg`.
+   `PreviewView.getBitmap()`, a documented-expensive, main-thread call —
+   the cost scales with the preview stream's resolution, most of which is
+   wasted here since only a few pixels of width get used from each frame
+   anyway. `MainActivity.startCamera()` requests a small stream via
+   `Preview.Builder().setTargetResolution(Size(480, 640))` specifically to
+   keep each snapshot cheap (a soft hint CameraX may not match exactly).
+   On top of that, capture is throttled two ways: an angle threshold
+   (`captureIntervalDeg`) and a hard wall-clock floor
+   (`minCaptureIntervalMs`, default 70ms, lowered from 150ms once the
+   smaller stream should have made each call cheaper) that caps the
+   absolute call rate no matter how fast someone pans. The time floor is
+   what actually prevents hanging the UI — an earlier version only had the
+   angle throttle, so panning fast enough could queue this expensive call
+   up faster than the main thread could drain it, which read as the whole
+   screen freezing. None of this (stream size, exact call cost) is verified
+   on real hardware; if capture hangs or stutters, raise
+   `minCaptureIntervalMs` back up first.
 5. **Registration seams.** Early versions pasted each strip as one rigid
    block at its registered vertical offset, so any jump in the pitch
    reading between two consecutive captures showed as a hard step in the
    photo — and since `minCaptureIntervalMs` (above) bounds how *often*
    strips can be captured, strips can end up fairly wide under normal
    panning speed, which made those steps read as a chunky, visibly offset
-   "fan" rather than a fine stagger. Tuning capture frequency against the
-   hang-prevention throttle turned out to be a losing trade, so
-   `addStrip()` now draws each strip in narrow (`SUB_COLUMN_WIDTH_PX`, 3px)
-   sub-columns whose vertical offset ramps linearly from where the previous
-   strip left off to this strip's own offset, instead of one constant
-   offset for the whole width — turning a hard step into a smooth ramp
-   regardless of strip width. `OrientationTracker`'s altitude smoothing
-   (`ALTITUDE_SMOOTHING_FACTOR`) still helps by damping the sensor jitter
-   that drives those jumps in the first place. The ramping math
+   "fan" rather than a fine stagger. `addStrip()` now draws each strip in
+   narrow (`SUB_COLUMN_WIDTH_PX`, 3px) sub-columns whose vertical offset
+   ramps linearly from where the previous strip left off to this strip's
+   own offset, instead of one constant offset for the whole width — turning
+   a hard step into a smooth ramp regardless of strip width, confirmed on a
+   real-device screenshot to actually soften the seams. What that
+   screenshot also showed: smoothing the seams between wide chunks doesn't
+   stop them from *being* wide, so the panorama still reads as a fan of
+   sloped fragments rather than one continuous photo — that's what the
+   smaller preview stream (above) is trying to fix at the source, by making
+   a higher capture rate affordable. `OrientationTracker`'s altitude
+   smoothing (`ALTITUDE_SMOOTHING_FACTOR`) also helps, damping the sensor
+   jitter that drives those jumps in the first place. The ramping math
    (`PanoramaGeometry.interpolatedSubColumns`) is unit-tested; the
-   Bitmap/Canvas drawing loop that uses it is not (no Android runtime
-   here), so this is the next thing to check if the photo still looks
-   stepped on real hardware.
+   Bitmap/Canvas drawing loop and the capture-rate/stream-size tuning are
+   not (no Android runtime here) — if the panorama still looks fragmented
+   after this round, the next lever isn't more parameter tuning, it's
+   reconsidering the capture architecture (e.g. a background-thread
+   `ImageAnalysis` pipeline instead of `PreviewView.getBitmap()`).
 6. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
    (`CONTROL_AE_LOCK` / `CONTROL_AWB_LOCK` via Camera2 interop) to stop
    consecutive strips from visibly banding as the camera's exposure drifts

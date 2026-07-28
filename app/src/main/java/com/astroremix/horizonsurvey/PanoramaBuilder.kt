@@ -41,8 +41,15 @@ class PanoramaBuilder(
     // Hard floor on time between captures, regardless of pan speed.
     // PreviewView.getBitmap() is a documented-expensive, main-thread call;
     // without this, fast panning can queue it up faster than it can drain,
-    // which reads as the whole UI hanging.
-    private val minCaptureIntervalMs: Long = 150,
+    // which reads as the whole UI hanging. This floor is also, in practice,
+    // the main thing determining how wide strips end up (see addStrip's
+    // ramping comment) -- lowering it gives a smoother-looking panorama at
+    // the cost of more frequent expensive calls. It was 150ms until the
+    // preview stream itself got much smaller (see MainActivity.startCamera's
+    // setTargetResolution), which should make each call meaningfully
+    // cheaper; if capture still hangs or stutters on real hardware, raise
+    // this back up before anything else.
+    private val minCaptureIntervalMs: Long = 70,
     val panoramaHeightPx: Int = 400,
     private val maxPitchRangeDeg: Double = 25.0,
 ) {

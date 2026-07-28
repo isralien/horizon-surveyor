@@ -8,6 +8,7 @@ import android.hardware.camera2.CaptureRequest
 import android.location.LocationManager
 import android.os.Bundle
 import android.text.InputType
+import android.util.Size
 import android.view.View
 import android.widget.EditText
 import android.widget.Toast
@@ -97,14 +98,27 @@ class MainActivity : AppCompatActivity() {
     // Camera
     // ------------------------------------------------------------------
 
+    @Suppress("DEPRECATION") // setTargetResolution is a deliberate choice, see comment below.
     @OptIn(ExperimentalCamera2Interop::class)
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
-            val preview = Preview.Builder().build().also {
-                it.surfaceProvider = binding.previewView.surfaceProvider
-            }
+            val preview = Preview.Builder()
+                // Panorama strips only ever use a few pixels of width from
+                // each captured frame, scaled down to panoramaHeightPx
+                // (400) anyway -- a full-resolution preview stream buys
+                // nothing here and makes every PreviewView.getBitmap() call
+                // (a documented-expensive, main-thread readback) far more
+                // costly than it needs to be. Requesting a small stream
+                // keeps each snapshot cheap, which is what actually allows
+                // capturing often enough for a smooth-looking panorama
+                // without risking the UI hang a too-frequent, full-res
+                // readback caused earlier. A soft hint, not a hard
+                // requirement -- CameraX picks the closest supported size.
+                .setTargetResolution(Size(480, 640))
+                .build()
+                .also { it.surfaceProvider = binding.previewView.surfaceProvider }
             cameraProvider.unbindAll()
             val boundCamera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
             camera = boundCamera
