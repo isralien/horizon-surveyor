@@ -45,65 +45,40 @@ class PanoramaGeometryTest {
     }
 
     @Test
-    fun `azimuthAltitudeAt reads azimuth straight off the x position`() {
-        val anchors = listOf(
-            PanoramaGeometry.AltitudeAnchor(0, 0.0),
-            PanoramaGeometry.AltitudeAnchor(60, 0.0),
+    fun `azimuthForXPx reads straight off the x position and wraps past 360`() {
+        assertEquals(105.0, PanoramaGeometry.azimuthForXPx(xPx = 30, startAzimuthDeg = 100.0, pixelsPerDegree = 6), 1e-9)
+        // 60px / 6px-per-degree = 10 degrees past 350, wraps exactly to 0/360
+        assertEquals(0.0, PanoramaGeometry.azimuthForXPx(xPx = 60, startAzimuthDeg = 350.0, pixelsPerDegree = 6), 1e-9)
+    }
+
+    @Test
+    fun `altitudeForYPx is the reference altitude exactly at vertical center`() {
+        val altitude = PanoramaGeometry.altitudeForYPx(
+            yPx = 200.0, referenceAltitudeDeg = 3.0, panoramaHeightPx = 400, verticalFovDeg = 50.0,
         )
-        val (azimuth, _) = PanoramaGeometry.azimuthAltitudeAt(
-            xPx = 30, yPx = 200, panoramaHeightPx = 400,
-            startAzimuthDeg = 100.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = anchors,
-        )!!
-        assertEquals(105.0, azimuth, 1e-9) // 30px / 6px-per-degree = 5 degrees past the 100 degree start
+        assertEquals(3.0, altitude, 1e-9)
     }
 
     @Test
-    fun `azimuthAltitudeAt wraps azimuth past 360`() {
-        val anchors = listOf(PanoramaGeometry.AltitudeAnchor(0, 0.0))
-        val (azimuth, _) = PanoramaGeometry.azimuthAltitudeAt(
-            xPx = 60, yPx = 200, panoramaHeightPx = 400,
-            startAzimuthDeg = 350.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = anchors,
-        )!!
-        assertEquals(0.0, azimuth, 1e-9) // 60px / 6px-per-degree = 10 degrees past 350, wraps exactly to 0/360
-    }
-
-    @Test
-    fun `azimuthAltitudeAt interpolates altitude linearly between the two nearest anchors`() {
-        val anchors = listOf(
-            PanoramaGeometry.AltitudeAnchor(0, 2.0),
-            PanoramaGeometry.AltitudeAnchor(100, 6.0),
+    fun `altitudeForYPx applies the vertical FOV correction away from center`() {
+        val above = PanoramaGeometry.altitudeForYPx(
+            yPx = 0.0, referenceAltitudeDeg = 0.0, panoramaHeightPx = 400, verticalFovDeg = 50.0, // top edge
         )
-        val (_, altitude) = PanoramaGeometry.azimuthAltitudeAt(
-            // Tap exactly at vertical center (yPx = height/2) so the FOV correction is zero.
-            xPx = 25, yPx = 200, panoramaHeightPx = 400,
-            startAzimuthDeg = 0.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = anchors,
-        )!!
-        assertEquals(3.0, altitude, 1e-9) // 25% of the way from 2.0 to 6.0
-    }
+        assertEquals(25.0, above, 1e-9) // above center reads a higher altitude
 
-    @Test
-    fun `azimuthAltitudeAt applies the vertical FOV correction for taps off-center`() {
-        val anchors = listOf(PanoramaGeometry.AltitudeAnchor(0, 0.0))
-
-        val (_, above) = PanoramaGeometry.azimuthAltitudeAt(
-            xPx = 0, yPx = 0, panoramaHeightPx = 400, // top edge: half the FOV above center
-            startAzimuthDeg = 0.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = anchors,
-        )!!
-        assertEquals(25.0, above, 1e-9) // tapping above center reads a higher altitude
-
-        val (_, below) = PanoramaGeometry.azimuthAltitudeAt(
-            xPx = 0, yPx = 400, panoramaHeightPx = 400, // bottom edge: half the FOV below center
-            startAzimuthDeg = 0.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = anchors,
-        )!!
+        val below = PanoramaGeometry.altitudeForYPx(
+            yPx = 400.0, referenceAltitudeDeg = 0.0, panoramaHeightPx = 400, verticalFovDeg = 50.0, // bottom edge
+        )
         assertEquals(-25.0, below, 1e-9)
     }
 
     @Test
-    fun `azimuthAltitudeAt returns null with no capture data`() {
-        val result = PanoramaGeometry.azimuthAltitudeAt(
-            xPx = 0, yPx = 0, panoramaHeightPx = 400,
-            startAzimuthDeg = 0.0, pixelsPerDegree = 6, verticalFovDeg = 50.0, anchors = emptyList(),
-        )
-        assertEquals(null, result)
+    fun `yPxForAltitude is the exact inverse of altitudeForYPx`() {
+        val cases = listOf(0.0 to 0.0, 120.0 to 3.5, 399.9 to -7.0, 5.0 to 40.0)
+        for ((yPx, referenceAltitude) in cases) {
+            val altitude = PanoramaGeometry.altitudeForYPx(yPx, referenceAltitude, panoramaHeightPx = 400, verticalFovDeg = 55.0)
+            val roundTrippedYPx = PanoramaGeometry.yPxForAltitude(altitude, referenceAltitude, panoramaHeightPx = 400, verticalFovDeg = 55.0)
+            assertEquals(yPx, roundTrippedYPx, 1e-9)
+        }
     }
 }

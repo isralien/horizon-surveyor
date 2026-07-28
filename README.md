@@ -8,23 +8,27 @@ parts of the sky are actually blocked from your observing spot.
 ## How it works
 
 1. **Capture.** Point the camera at the horizon and tap **Start Capture**,
-   then turn slowly on the spot. A progress ring at the top shows a fixed
-   dot for where you started and a moving dot for your current heading —
-   panning brings them back together. As you turn, the app builds a
-   panorama as a "pushbroom" scan: it crops a thin vertical strip from the
-   live preview every few degrees and lays the strips side by side, each
-   tagged with the exact azimuth/altitude the phone was reading at that
-   instant. Placement comes from the orientation sensor, not image
-   matching, so there's no seam-blending or feature-matching involved —
-   the x-axis is an exact azimuth scale by construction. Capture finishes
+   then turn slowly on the spot, keeping the on-screen crosshair on the
+   horizon line. A progress ring at the top shows a fixed dot for where you
+   started and a moving dot for your current heading — panning brings them
+   back together. As you turn, the app builds a panorama as a "pushbroom"
+   scan: it crops a thin vertical strip from the live preview every few
+   degrees and lays the strips side by side, each tagged with the exact
+   azimuth the strip was captured at *and* the phone's pitch at that
+   instant — i.e. a horizon point is recorded automatically for every
+   strip, the same "line the crosshair up with the horizon" technique as a
+   manual tap-to-mark flow, just sampled continuously instead of requiring a
+   tap. Placement comes from the orientation sensor, not image matching, so
+   there's no seam-blending or feature-matching involved — the x-axis is an
+   exact azimuth scale by construction. Auto-exposure/white-balance lock
+   during capture to reduce banding between strips. Capture finishes
    automatically once the two dots meet (a full turn).
-2. **Review.** The finished panorama opens full-width and scrollable. Tap
-   anywhere on the horizon line in the photo to read off its azimuth/altitude
-   and drop a marker — repeat around the full image. This replaced an
-   earlier live-tap-while-panning design: tapping a big, still photo is far
-   more accurate than trying to line up a live reticle while turning.
-3. **Finish.** Once you've marked enough points, export writes the
-   Stellarium files and opens the share sheet.
+2. **Review.** The finished panorama opens pinch-zoomable and pannable, with
+   a line connecting all the recorded points drawn over it. If a point looks
+   wrong (e.g. the crosshair briefly caught an obstacle, or drifted off the
+   true horizon), drag it up or down to correct it — that adjusts only its
+   altitude, never which azimuth it belongs to.
+3. **Finish.** Export writes the Stellarium files and opens the share sheet.
 
 This deliberately avoids full computer-vision panorama stitching (feature
 matching, blending) — that's a much harder, error-prone problem to get right
@@ -36,20 +40,24 @@ importantly, give exact coordinates for free.
 - `core/` — pure Kotlin/JVM module, no Android dependency:
   - `HorizonPoint` / `HorizonProfile` — sorting, dedup, polygon closing.
   - `StellariumHorizonExporter` — the Stellarium/CSV file formats.
-  - `PanoramaGeometry` — the panorama math: unwrapped-rotation tracking
-    across the 0/360 wrap, strip placement, and tap → azimuth/altitude
-    lookup (interpolating the phone's recorded pitch between capture
-    checkpoints, corrected for how far the tap landed from vertical center
-    using the camera's field of view).
-  
+  - `PanoramaGeometry` — unwrapped-rotation tracking across the 0/360 wrap,
+    strip placement, and the altitude <-> vertical-pixel-position math used
+    both to draw the horizon line and to convert a dragged point back to an
+    altitude.
+  - `PanoramaViewTransform` — the zoom/pan math for the review screen: fit
+    scale, clamping so the image never pans past its own edges, and
+    view <-> content coordinate conversion.
+
   All of the above has a real unit test suite (`./gradlew :core:test`,
-  21 tests) — notably including the wraparound-accumulation and
-  tap-interpolation math, which is exactly the kind of thing that's easy to
-  get subtly backwards.
+  26 tests) — notably including the wraparound-accumulation and
+  coordinate-conversion math, which is exactly the kind of thing that's easy
+  to get subtly backwards (one already caught a bug in a test's own
+  arithmetic, not the implementation, while this was being built).
 - `app/` — the Android app: CameraX preview, sensor fusion
   (`OrientationTracker`), the panorama capture glue (`PanoramaBuilder`,
   wrapping `PanoramaGeometry` with actual Bitmap/Canvas work), the progress
-  ring and marker overlays, and export/share.
+  ring, the zoomable review view with drag-to-correct
+  (`PanoramaReviewView`), and export/share.
 
 ## Output files
 
@@ -95,18 +103,18 @@ worth checking on first use:
    compass calibration before surveying, and expect a few degrees of
    real-world error — fine for "is that tree blocking Saturn," not
    survey-grade.
-3. **Vertical field of view.** Tapping the panorama converts pixel offset
+3. **Vertical field of view.** Dragging a point converts its pixel offset
    from vertical center into a degree offset using the camera's vertical
    FOV, computed from `CameraCharacteristics` (sensor physical size +
    focal length). This assumes the preview crop is proportional to the full
    sensor and a rectilinear (non-fisheye) lens — a reasonable approximation
-   for a typical phone main camera, not an exact one. Sanity check: tap
-   dead center of a capture strip and confirm the reported altitude roughly
-   matches the readout you saw live while capturing that part of the pan;
-   if it's off by more than a couple degrees, the `DEFAULT_VERTICAL_FOV_DEG`
-   fallback in `MainActivity.kt` (55°) may need adjusting for your device,
-   or `computeVerticalFovDeg()` may be failing to read characteristics and
-   silently falling back to it.
+   for a typical phone main camera, not an exact one. Sanity check: right
+   after capture, before dragging anything, the line should already roughly
+   trace the real horizon in the photo (each point starts at the pitch
+   reading recorded when its strip was captured); if the fallback
+   `DEFAULT_VERTICAL_FOV_DEG` (55°) is being used instead of a real
+   per-device reading, drag corrections will feel like they need a bigger
+   or smaller finger movement than expected to match what you see.
 4. **Preview snapshot cost.** Panorama strips come from
    `PreviewView.getBitmap()`, called every few degrees of rotation
    (throttled, not every frame) rather than a raw camera analysis stream —
@@ -114,6 +122,12 @@ worth checking on first use:
    get wrong), but it's documented as a relatively expensive call. If
    panning feels janky, increase `captureIntervalDeg` in
    `PanoramaBuilder`'s constructor to call it less often.
+5. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
+   (`CONTROL_AE_LOCK` / `CONTROL_AWB_LOCK` via Camera2 interop) to stop
+   consecutive strips from visibly banding as the camera's exposure drifts
+   mid-pan. This should be broadly supported, but isn't verified on real
+   hardware; if strips still look inconsistently exposed, that's the first
+   place to check.
 
 Location permission is optional and used only to correct magnetic azimuth to
 true-north azimuth via `GeomagneticField`; it's never stored or exported.

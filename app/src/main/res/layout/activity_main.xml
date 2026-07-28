@@ -102,37 +102,16 @@
 
     <!-- ===================== Review screen ===================== -->
 
-    <HorizontalScrollView
-        android:id="@+id/reviewScrollView"
+    <com.astroremix.horizonsurvey.PanoramaReviewView
+        android:id="@+id/panoramaReviewView"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:scrollbars="none"
         android:visibility="gone"
+        android:contentDescription="@string/panorama_content_description"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toTopOf="@id/reviewControlsBar"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <FrameLayout
-            android:id="@+id/reviewImageFrame"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent">
-
-            <ImageView
-                android:id="@+id/panoramaImageView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_vertical"
-                android:scaleType="matrix"
-                android:contentDescription="@string/panorama_content_description" />
-
-            <com.astroremix.horizonsurvey.PanoramaMarkerOverlayView
-                android:id="@+id/markerOverlayView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_vertical" />
-        </FrameLayout>
-    </HorizontalScrollView>
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <TextView
         android:id="@+id/reviewReadoutText"
@@ -144,31 +123,17 @@
         android:fontFamily="monospace"
         android:textColor="#FFFFFF"
         android:textSize="14sp"
-        android:text="@string/tap_to_check_coords"
+        android:text="@string/drag_to_correct"
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
-
-    <TextView
-        android:id="@+id/reviewPointsCountText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_margin="16dp"
-        android:background="@color/overlay_scrim"
-        android:padding="8dp"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:text="@string/points_recorded"
-        android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
 
     <LinearLayout
         android:id="@+id/reviewControlsBar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:weightSum="3"
+        android:weightSum="2"
         android:padding="12dp"
         android:background="#111827"
         android:visibility="gone"
@@ -184,13 +149,6 @@
             android:text="@string/retake" />
 
         <Button
-            android:id="@+id/undoMarkButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/undo" />
-
-        <Button
             android:id="@+id/finishButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -203,6 +161,6 @@
         android:id="@+id/reviewGroup"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        app:constraint_referenced_ids="reviewScrollView,reviewReadoutText,reviewPointsCountText,reviewControlsBar" />
+        app:constraint_referenced_ids="panoramaReviewView,reviewReadoutText,reviewControlsBar" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

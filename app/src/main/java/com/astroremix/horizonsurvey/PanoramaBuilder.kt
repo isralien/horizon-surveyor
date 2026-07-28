@@ -10,12 +10,24 @@ import com.astroremix.horizonsurvey.core.PanoramaGeometry
  * positioned by exactly how far the phone has rotated since capture began
  * (see [PanoramaGeometry], which owns the placement/lookup math and is
  * unit-tested independently of this Bitmap/Canvas glue).
+ *
+ * Every captured strip also produces a [Marker]: the phone's pitch at that
+ * instant, recorded automatically (the same "line the crosshair up with the
+ * horizon" technique as a live tap-to-mark flow, just sampled continuously
+ * instead of requiring a tap). [Marker.yPx] starts at the strip's vertical
+ * center -- where that reading was taken -- and is mutable so the review
+ * screen can drag it to correct misreadings (e.g. an obstacle briefly
+ * throwing off the crosshair alignment) without needing to recapture.
  */
 class PanoramaBuilder(
     private val pixelsPerDegree: Int = 6,
     private val captureIntervalDeg: Double = 3.0,
-    private val panoramaHeightPx: Int = 400,
+    val panoramaHeightPx: Int = 400,
 ) {
+    class Marker(val xPx: Int, val azimuthDeg: Double, val referenceAltitudeDeg: Double) {
+        var yPx: Double = 0.0
+    }
+
     private val totalWidthPx = 360 * pixelsPerDegree
 
     private var canvasBitmap: Bitmap? = null
@@ -23,7 +35,8 @@ class PanoramaBuilder(
     private var startAzimuthDeg = 0.0
     private var lastRawAzimuthDeg = 0.0
     private var lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
-    private val anchors = mutableListOf<PanoramaGeometry.AltitudeAnchor>()
+    private val _markers = mutableListOf<Marker>()
+    val markers: List<Marker> get() = _markers
 
     /** Net degrees rotated since [begin], unwrapped (can exceed +-360 if the user overshoots). */
     var traveledDeg: Double = 0.0
@@ -37,7 +50,7 @@ class PanoramaBuilder(
         lastRawAzimuthDeg = currentAzimuthDeg
         traveledDeg = 0.0
         lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
-        anchors.clear()
+        _markers.clear()
         canvasBitmap?.recycle()
         canvasBitmap = Bitmap.createBitmap(totalWidthPx, panoramaHeightPx, Bitmap.Config.ARGB_8888)
         canvas = Canvas(canvasBitmap!!)
@@ -47,7 +60,7 @@ class PanoramaBuilder(
         canvasBitmap?.recycle()
         canvasBitmap = null
         canvas = null
-        anchors.clear()
+        _markers.clear()
     }
 
     /** Feed a new orientation reading; returns true when enough rotation has accrued to capture another strip. */
@@ -60,12 +73,13 @@ class PanoramaBuilder(
     /**
      * Crops a strip from [sourceBitmap]'s horizontal center and paints it onto
      * the panorama, filling all the way back to the previous capture's edge so
-     * bursty pan speed never leaves a gap.
+     * bursty pan speed never leaves a gap. Records a [Marker] for this strip
+     * using [altitudeDeg] (the phone's current pitch) as its reference.
      */
     fun addStrip(sourceBitmap: Bitmap, altitudeDeg: Double) {
         val targetCanvas = canvas ?: return
         val xPx = PanoramaGeometry.stripXPx(traveledDeg, pixelsPerDegree, totalWidthPx)
-        val prevX = anchors.lastOrNull()?.xPx ?: 0
+        val prevX = _markers.lastOrNull()?.xPx ?: 0
         val stripWidth = (xPx - prevX + 1).coerceIn(1, sourceBitmap.width)
 
         val cropLeft = ((sourceBitmap.width - stripWidth) / 2).coerceIn(0, sourceBitmap.width - stripWidth)
@@ -75,19 +89,8 @@ class PanoramaBuilder(
         rawStrip.recycle()
         scaledStrip.recycle()
 
-        anchors.add(PanoramaGeometry.AltitudeAnchor(xPx, altitudeDeg))
+        val azimuthDeg = PanoramaGeometry.azimuthForXPx(xPx, startAzimuthDeg, pixelsPerDegree)
+        _markers.add(Marker(xPx, azimuthDeg, altitudeDeg).apply { yPx = panoramaHeightPx / 2.0 })
         lastCaptureTraveledDeg = traveledDeg
     }
-
-    /** Azimuth/altitude for a tapped point in the finished panorama, or null before any capture. */
-    fun azimuthAltitudeAt(xPx: Int, yPx: Int, verticalFovDeg: Double): Pair<Double, Double>? =
-        PanoramaGeometry.azimuthAltitudeAt(
-            xPx = xPx,
-            yPx = yPx,
-            panoramaHeightPx = panoramaHeightPx,
-            startAzimuthDeg = startAzimuthDeg,
-            pixelsPerDegree = pixelsPerDegree,
-            verticalFovDeg = verticalFovDeg,
-            anchors = anchors,
-        )
 }
