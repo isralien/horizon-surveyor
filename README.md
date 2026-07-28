@@ -13,14 +13,20 @@ parts of the sky are actually blocked from your observing spot.
    started and a moving dot for your current heading — panning brings them
    back together. As you turn, the app builds a panorama as a "pushbroom"
    scan: it crops a thin vertical strip from the live preview every few
-   degrees and lays the strips side by side, each tagged with the exact
-   azimuth the strip was captured at *and* the phone's pitch at that
-   instant — i.e. a horizon point is recorded automatically for every
-   strip, the same "line the crosshair up with the horizon" technique as a
-   manual tap-to-mark flow, just sampled continuously instead of requiring a
-   tap. Placement comes from the orientation sensor, not image matching, so
-   there's no seam-blending or feature-matching involved — the x-axis is an
-   exact azimuth scale by construction. Auto-exposure/white-balance lock
+   degrees and lays the strips side by side, positioned horizontally by
+   exactly how far the phone has rotated (an exact azimuth scale, no
+   feature-matching involved). Vertically, each strip is *shifted* by how
+   far the phone's pitch deviated from the pitch reading when capture
+   started, registering every strip against that one shared reference —
+   so the photo reads as a single coherent panorama instead of a jump-cut
+   between frames, even though your hand naturally drifts up/down while
+   tracking an uneven horizon. A horizon point is recorded automatically for
+   every strip at the row matching its own pitch reading, so the line
+   through them traces the real horizon shape immediately, without needing
+   any taps. (Above/below the horizon itself, expect a jagged "staircase" at
+   the sky/ground edges of the image where consecutive strips' registration
+   shift differs — that's an expected side effect of aligning the horizon
+   rather than the frame edges, not a bug.) Auto-exposure/white-balance lock
    during capture to reduce banding between strips. Capture finishes
    automatically once the two dots meet (a full turn).
 2. **Review.** The finished panorama opens pinch-zoomable and pannable, with
@@ -41,15 +47,15 @@ importantly, give exact coordinates for free.
   - `HorizonPoint` / `HorizonProfile` — sorting, dedup, polygon closing.
   - `StellariumHorizonExporter` — the Stellarium/CSV file formats.
   - `PanoramaGeometry` — unwrapped-rotation tracking across the 0/360 wrap,
-    strip placement, and the altitude <-> vertical-pixel-position math used
-    both to draw the horizon line and to convert a dragged point back to an
-    altitude.
+    strip placement (horizontal and the vertical registration shift), and
+    the altitude <-> canvas-row math used both to draw the horizon line and
+    to convert a dragged point back to an altitude.
   - `PanoramaViewTransform` — the zoom/pan math for the review screen: fit
     scale, clamping so the image never pans past its own edges, and
     view <-> content coordinate conversion.
 
   All of the above has a real unit test suite (`./gradlew :core:test`,
-  26 tests) — notably including the wraparound-accumulation and
+  28 tests) — notably including the wraparound-accumulation and
   coordinate-conversion math, which is exactly the kind of thing that's easy
   to get subtly backwards (one already caught a bug in a test's own
   arithmetic, not the implementation, while this was being built).
@@ -103,18 +109,17 @@ worth checking on first use:
    compass calibration before surveying, and expect a few degrees of
    real-world error — fine for "is that tree blocking Saturn," not
    survey-grade.
-3. **Vertical field of view.** Dragging a point converts its pixel offset
-   from vertical center into a degree offset using the camera's vertical
-   FOV, computed from `CameraCharacteristics` (sensor physical size +
-   focal length). This assumes the preview crop is proportional to the full
-   sensor and a rectilinear (non-fisheye) lens — a reasonable approximation
-   for a typical phone main camera, not an exact one. Sanity check: right
-   after capture, before dragging anything, the line should already roughly
-   trace the real horizon in the photo (each point starts at the pitch
-   reading recorded when its strip was captured); if the fallback
-   `DEFAULT_VERTICAL_FOV_DEG` (55°) is being used instead of a real
-   per-device reading, drag corrections will feel like they need a bigger
-   or smaller finger movement than expected to match what you see.
+3. **Vertical field of view.** Both the strip registration shift and
+   dragging a point convert a pixel offset into a degree offset using the
+   camera's vertical FOV, computed from `CameraCharacteristics` (sensor
+   physical size + focal length). This assumes the preview crop is
+   proportional to the full sensor and a rectilinear (non-fisheye) lens —
+   a reasonable approximation for a typical phone main camera, not an exact
+   one. Sanity check: right after capture, before dragging anything, the
+   line should already roughly trace the real horizon in the photo; if the
+   fallback `DEFAULT_VERTICAL_FOV_DEG` (55°) is being used instead of a real
+   per-device reading, the registration/drag scale will be off (horizon
+   shape looks stretched or compressed vertically vs. what you saw live).
 4. **Preview snapshot cost.** Panorama strips come from
    `PreviewView.getBitmap()`, called every few degrees of rotation
    (throttled, not every frame) rather than a raw camera analysis stream —

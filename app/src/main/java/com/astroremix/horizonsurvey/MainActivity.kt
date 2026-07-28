@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private var camera: Camera? = null
     private var state = SurveyState.IDLE
     private var currentAzimuthDeg = 0.0
+    private var currentAltitudeDeg = 0.0
     private var verticalFovDeg = DEFAULT_VERTICAL_FOV_DEG
 
     private val permissionRequest =
@@ -66,11 +67,8 @@ class MainActivity : AppCompatActivity() {
         binding.retakeButton.setOnClickListener { onRetake() }
         binding.finishButton.setOnClickListener { onFinish() }
         binding.panoramaReviewView.setOnMarkerDragged { marker ->
-            val altitudeDeg = PanoramaGeometry.altitudeForYPx(
-                marker.yPx, marker.referenceAltitudeDeg, panoramaBuilder.panoramaHeightPx, verticalFovDeg,
-            )
             binding.reviewReadoutText.text = String.format(
-                Locale.US, "az %05.1f  alt %+05.1f", marker.azimuthDeg, altitudeDeg
+                Locale.US, "az %05.1f  alt %+05.1f", marker.azimuthDeg, altitudeDegFor(marker.yPx)
             )
         }
 
@@ -166,8 +164,15 @@ class MainActivity : AppCompatActivity() {
     // Orientation / capture
     // ------------------------------------------------------------------
 
+    /** Converts a review-screen marker's canvas row to an altitude, given the current capture's registration. */
+    private fun altitudeDegFor(yPx: Double): Double = PanoramaGeometry.altitudeForYPx(
+        yPx, panoramaBuilder.globalReferenceAltitudeDeg, panoramaBuilder.canvasReferenceYPx,
+        panoramaBuilder.panoramaHeightPx, verticalFovDeg,
+    )
+
     private fun onOrientationChanged(azimuthDeg: Double, altitudeDeg: Double) {
         currentAzimuthDeg = azimuthDeg
+        currentAltitudeDeg = altitudeDeg
         binding.readoutText.text = String.format(
             Locale.US, "az %05.1f  alt %+05.1f", azimuthDeg, altitudeDeg
         )
@@ -180,7 +185,7 @@ class MainActivity : AppCompatActivity() {
         binding.remainingText.text = String.format(Locale.US, "%.0f° remaining", remainingDeg)
 
         if (dueForCapture) {
-            binding.previewView.bitmap?.let { panoramaBuilder.addStrip(it, altitudeDeg) }
+            binding.previewView.bitmap?.let { panoramaBuilder.addStrip(it, altitudeDeg, verticalFovDeg) }
         }
         if (panoramaBuilder.isLoopClosed) {
             finalizeCapture()
@@ -190,7 +195,7 @@ class MainActivity : AppCompatActivity() {
     private fun onCaptureActionClicked() {
         when (state) {
             SurveyState.IDLE -> {
-                panoramaBuilder.begin(currentAzimuthDeg)
+                panoramaBuilder.begin(currentAzimuthDeg, currentAltitudeDeg, verticalFovDeg)
                 setExposureLocked(true)
                 binding.progressRingView.setActive(true)
                 binding.captureActionButton.setText(R.string.cancel_capture)
@@ -248,10 +253,7 @@ class MainActivity : AppCompatActivity() {
 
         val profile = HorizonProfile()
         for (marker in markers) {
-            val altitudeDeg = PanoramaGeometry.altitudeForYPx(
-                marker.yPx, marker.referenceAltitudeDeg, panoramaBuilder.panoramaHeightPx, verticalFovDeg,
-            )
-            profile.add(HorizonPoint(marker.azimuthDeg, altitudeDeg))
+            profile.add(HorizonPoint(marker.azimuthDeg, altitudeDegFor(marker.yPx)))
         }
 
         val input = EditText(this).apply {

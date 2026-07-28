@@ -29,15 +29,25 @@ object PanoramaGeometry {
         normalizeDeg(startAzimuthDeg + xPx.toDouble() / pixelsPerDegree)
 
     /**
-     * Altitude for a marker sitting at [yPx] within a column whose vertical
-     * center corresponds to [referenceAltitudeDeg] (the phone's recorded pitch
-     * when that column was captured). Moving the marker away from center
-     * shifts altitude by the vertical field of view proportionally.
+     * Altitude for canvas row [yPx], given that row [referenceYPx] is known to
+     * be [referenceAltitudeDeg] and each strip's [stripHeightPx] pixels span
+     * [verticalFovDeg] of vertical field of view -- the same px-per-degree
+     * scale holds across the whole canvas regardless of how individual strips
+     * were vertically shifted to register against that one shared reference.
      */
-    fun altitudeForYPx(yPx: Double, referenceAltitudeDeg: Double, panoramaHeightPx: Int, verticalFovDeg: Double): Double =
-        referenceAltitudeDeg - (yPx - panoramaHeightPx / 2.0) / panoramaHeightPx * verticalFovDeg
+    fun altitudeForYPx(yPx: Double, referenceAltitudeDeg: Double, referenceYPx: Double, stripHeightPx: Int, verticalFovDeg: Double): Double =
+        referenceAltitudeDeg - (yPx - referenceYPx) / stripHeightPx * verticalFovDeg
 
-    /** Inverse of [altitudeForYPx]: where a given altitude sits vertically within its column. */
-    fun yPxForAltitude(altitudeDeg: Double, referenceAltitudeDeg: Double, panoramaHeightPx: Int, verticalFovDeg: Double): Double =
-        panoramaHeightPx / 2.0 - (altitudeDeg - referenceAltitudeDeg) / verticalFovDeg * panoramaHeightPx
+    /** Inverse of [altitudeForYPx]: the canvas row where a given altitude sits. */
+    fun yPxForAltitude(altitudeDeg: Double, referenceAltitudeDeg: Double, referenceYPx: Double, stripHeightPx: Int, verticalFovDeg: Double): Double =
+        referenceYPx - (altitudeDeg - referenceAltitudeDeg) / verticalFovDeg * stripHeightPx
+
+    /**
+     * Extra vertical padding (px, one side) to add above and below a strip's
+     * own height so strips can be shifted to register against a shared
+     * reference without any content falling off the canvas, covering up to
+     * [maxPitchRangeDeg] of deviation from that reference in either direction.
+     */
+    fun verticalPaddingPx(maxPitchRangeDeg: Double, stripHeightPx: Int, verticalFovDeg: Double): Int =
+        (maxPitchRangeDeg / verticalFovDeg * stripHeightPx).roundToInt()
 }
