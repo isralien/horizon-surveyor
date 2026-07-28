@@ -2,17 +2,20 @@
 <resources>
     <string name="app_name">Horizon Surveyor</string>
 
-    <string name="instructions_idle">Point the camera at the horizon and turn slowly on the spot. Line up the horizon under the crosshair and tap Mark at regular intervals as you turn.</string>
-    <string name="mark_point">Mark</string>
+    <string name="instructions_idle">Point the camera at the horizon, then tap Start Capture and turn slowly on the spot. The ring at top shows how much of the turn is left — capture finishes automatically once you complete the loop.</string>
+    <string name="start_capture">Start Capture</string>
+    <string name="cancel_capture">Cancel</string>
     <string name="undo">Undo</string>
     <string name="finish_survey">Finish</string>
-    <string name="reset">Reset</string>
+    <string name="retake">Retake</string>
     <string name="points_recorded">%1$d points recorded</string>
-    <string name="not_enough_points">Mark at least 8 points spread around the full turn before finishing.</string>
+    <string name="not_enough_points">Tap at least 8 points spread around the panorama before finishing.</string>
     <string name="camera_permission_required">Camera permission is required to survey the horizon.</string>
     <string name="location_permission_rationale">Location is optional. If granted, it is used only to correct compass readings to true north (magnetic declination); it is never stored or exported.</string>
     <string name="export_share_title">Share horizon survey</string>
     <string name="survey_name_hint">Name this horizon (e.g. Backyard)</string>
-    <string name="confirm_discard_points">Discard all %1$d recorded points?</string>
+    <string name="confirm_discard_points">Discard the panorama and all %1$d recorded points?</string>
     <string name="no_orientation_sensor">This device has no compass/orientation sensor.</string>
+    <string name="panorama_content_description">Captured 360 degree horizon panorama</string>
+    <string name="tap_to_check_coords">Tap the horizon to check its coordinates</string>
 </resources>

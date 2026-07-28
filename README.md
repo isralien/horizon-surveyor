@@ -7,28 +7,49 @@ parts of the sky are actually blocked from your observing spot.
 
 ## How it works
 
-This is the "manual-tap" approach, not automatic image analysis: as you turn
-360° on the spot, you visually line up the on-screen horizon reticle with the
-real horizon and tap **Mark** every 10-20°. The phone's fused orientation
-sensor (`TYPE_ROTATION_VECTOR`) records the compass azimuth and tilt angle
-(altitude) at the moment you tap. This is far more reliable than automated
-sky/ground image segmentation — no confusion from clouds, glare, or a hazy
-tree line — at the cost of being manual instead of instant.
+1. **Capture.** Point the camera at the horizon and tap **Start Capture**,
+   then turn slowly on the spot. A progress ring at the top shows a fixed
+   dot for where you started and a moving dot for your current heading —
+   panning brings them back together. As you turn, the app builds a
+   panorama as a "pushbroom" scan: it crops a thin vertical strip from the
+   live preview every few degrees and lays the strips side by side, each
+   tagged with the exact azimuth/altitude the phone was reading at that
+   instant. Placement comes from the orientation sensor, not image
+   matching, so there's no seam-blending or feature-matching involved —
+   the x-axis is an exact azimuth scale by construction. Capture finishes
+   automatically once the two dots meet (a full turn).
+2. **Review.** The finished panorama opens full-width and scrollable. Tap
+   anywhere on the horizon line in the photo to read off its azimuth/altitude
+   and drop a marker — repeat around the full image. This replaced an
+   earlier live-tap-while-panning design: tapping a big, still photo is far
+   more accurate than trying to line up a live reticle while turning.
+3. **Finish.** Once you've marked enough points, export writes the
+   Stellarium files and opens the share sheet.
 
-Automatic detection (analyzing the live camera feed for the sky/ground
-boundary) is a natural v2, and it's why the point-recording logic lives in a
-plain-Kotlin `core` module decoupled from the UI — a future CV pipeline can
-feed it `HorizonPoint`s the same way manual taps do today.
+This deliberately avoids full computer-vision panorama stitching (feature
+matching, blending) — that's a much harder, error-prone problem to get right
+without hardware to test against. Sensor-placed strips are simple and, more
+importantly, give exact coordinates for free.
 
 ## Project layout
 
-- `core/` — pure Kotlin/JVM module, no Android dependency. `HorizonPoint`,
-  `HorizonProfile` (sorting, dedup, polygon closing) and
-  `StellariumHorizonExporter`. Has a real unit test suite
-  (`./gradlew :core:test`) covering azimuth normalization, wraparound
-  closing, duplicate-azimuth handling, and the exact exported file format.
-- `app/` — the Android app: CameraX preview, sensor fusion, the tap-to-mark
-  UI, and export/share.
+- `core/` — pure Kotlin/JVM module, no Android dependency:
+  - `HorizonPoint` / `HorizonProfile` — sorting, dedup, polygon closing.
+  - `StellariumHorizonExporter` — the Stellarium/CSV file formats.
+  - `PanoramaGeometry` — the panorama math: unwrapped-rotation tracking
+    across the 0/360 wrap, strip placement, and tap → azimuth/altitude
+    lookup (interpolating the phone's recorded pitch between capture
+    checkpoints, corrected for how far the tap landed from vertical center
+    using the camera's field of view).
+  
+  All of the above has a real unit test suite (`./gradlew :core:test`,
+  21 tests) — notably including the wraparound-accumulation and
+  tap-interpolation math, which is exactly the kind of thing that's easy to
+  get subtly backwards.
+- `app/` — the Android app: CameraX preview, sensor fusion
+  (`OrientationTracker`), the panorama capture glue (`PanoramaBuilder`,
+  wrapping `PanoramaGeometry` with actual Bitmap/Canvas work), the progress
+  ring and marker overlays, and export/share.
 
 ## Output files
 
@@ -60,7 +81,7 @@ generic az/alt horizon list.
 ## Known limitations / things to verify on a real device
 
 I don't have an Android device or SDK in the environment this was built in,
-so this has been written carefully but **not run on hardware**. Two things
+so this has been written carefully but **not run on hardware**. Things
 worth checking on first use:
 
 1. **Altitude sign.** `OrientationTracker.kt` derives the axis remap for
@@ -74,14 +95,33 @@ worth checking on first use:
    compass calibration before surveying, and expect a few degrees of
    real-world error — fine for "is that tree blocking Saturn," not
    survey-grade.
+3. **Vertical field of view.** Tapping the panorama converts pixel offset
+   from vertical center into a degree offset using the camera's vertical
+   FOV, computed from `CameraCharacteristics` (sensor physical size +
+   focal length). This assumes the preview crop is proportional to the full
+   sensor and a rectilinear (non-fisheye) lens — a reasonable approximation
+   for a typical phone main camera, not an exact one. Sanity check: tap
+   dead center of a capture strip and confirm the reported altitude roughly
+   matches the readout you saw live while capturing that part of the pan;
+   if it's off by more than a couple degrees, the `DEFAULT_VERTICAL_FOV_DEG`
+   fallback in `MainActivity.kt` (55°) may need adjusting for your device,
+   or `computeVerticalFovDeg()` may be failing to read characteristics and
+   silently falling back to it.
+4. **Preview snapshot cost.** Panorama strips come from
+   `PreviewView.getBitmap()`, called every few degrees of rotation
+   (throttled, not every frame) rather than a raw camera analysis stream —
+   simpler and correctness-safe (no manual sensor-buffer rotation math to
+   get wrong), but it's documented as a relatively expensive call. If
+   panning feels janky, increase `captureIntervalDeg` in
+   `PanoramaBuilder`'s constructor to call it less often.
 
 Location permission is optional and used only to correct magnetic azimuth to
 true-north azimuth via `GeomagneticField`; it's never stored or exported.
 
 ## Building
 
-Open `android/` in Android Studio (Iguana+), let it sync, run on a device.
-Or from the command line with the Android SDK installed:
+Open the project root in Android Studio (Iguana+), let it sync, run on a
+device. Or from the command line with the Android SDK installed:
 
 ```
 ./gradlew :app:assembleDebug

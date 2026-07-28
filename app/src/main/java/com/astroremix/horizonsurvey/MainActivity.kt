@@ -3,14 +3,21 @@ package com.astroremix.horizonsurvey
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.location.LocationManager
 import android.os.Bundle
 import android.text.InputType
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -19,15 +26,22 @@ import com.astroremix.horizonsurvey.core.HorizonPoint
 import com.astroremix.horizonsurvey.core.HorizonProfile
 import com.astroremix.horizonsurvey.databinding.ActivityMainBinding
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+private enum class SurveyState { IDLE, CAPTURING, REVIEW }
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var orientationTracker: OrientationTracker
-
+    private val panoramaBuilder = PanoramaBuilder()
     private val profile = HorizonProfile()
+    private val markers = mutableListOf<Pair<Float, Float>>()
+
+    private var state = SurveyState.IDLE
     private var currentAzimuthDeg = 0.0
-    private var currentAltitudeDeg = 0.0
+    private var verticalFovDeg = DEFAULT_VERTICAL_FOV_DEG
 
     private val permissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -47,12 +61,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         orientationTracker = OrientationTracker(this)
-        updatePointsCount()
 
-        binding.markButton.setOnClickListener { onMarkPoint() }
-        binding.undoButton.setOnClickListener { onUndo() }
-        binding.resetButton.setOnClickListener { onReset() }
+        binding.captureActionButton.setOnClickListener { onCaptureActionClicked() }
+        binding.retakeButton.setOnClickListener { onRetake() }
+        binding.undoMarkButton.setOnClickListener { onUndoMark() }
         binding.finishButton.setOnClickListener { onFinish() }
+        binding.reviewImageFrame.setOnTouchListener { _, event ->
+            reviewTapDetector.onTouchEvent(event)
+            false // let the HorizontalScrollView still handle drag/fling
+        }
 
         permissionRequest.launch(
             arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -63,9 +80,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (orientationTracker.isAvailable) {
             orientationTracker.start(OrientationTracker.Listener { azimuthDeg, altitudeDeg ->
-                currentAzimuthDeg = azimuthDeg
-                currentAltitudeDeg = altitudeDeg
-                updateReadout()
+                onOrientationChanged(azimuthDeg, altitudeDeg)
             })
         } else {
             Toast.makeText(this, R.string.no_orientation_sensor, Toast.LENGTH_LONG).show()
@@ -77,9 +92,11 @@ class MainActivity : AppCompatActivity() {
         orientationTracker.stop()
     }
 
-    private fun hasCameraPermission() =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    // ------------------------------------------------------------------
+    // Camera
+    // ------------------------------------------------------------------
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
@@ -88,8 +105,25 @@ class MainActivity : AppCompatActivity() {
                 it.surfaceProvider = binding.previewView.surfaceProvider
             }
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+            val camera = cameraProvider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+            verticalFovDeg = computeVerticalFovDeg(camera) ?: DEFAULT_VERTICAL_FOV_DEG
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun computeVerticalFovDeg(camera: Camera): Double? {
+        val characteristics = Camera2CameraInfo.from(camera.cameraInfo)
+        val sensorSize = characteristics.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            ?: return null
+        val focalLengthMm = characteristics
+            .getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            ?.firstOrNull()
+            ?: return null
+        if (focalLengthMm <= 0f) return null
+        // Approximation: assumes the preview crop is proportional to the full sensor
+        // and a rectilinear (non-fisheye) lens -- close enough for backyard use, not
+        // survey-grade precision. See README for the on-device sanity check.
+        return Math.toDegrees(2.0 * kotlin.math.atan((sensorSize.height / 2.0) / focalLengthMm.toDouble()))
     }
 
     private fun applyDeclinationFromLastKnownLocation() {
@@ -109,40 +143,123 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateReadout() {
+    // ------------------------------------------------------------------
+    // Orientation / capture
+    // ------------------------------------------------------------------
+
+    private fun onOrientationChanged(azimuthDeg: Double, altitudeDeg: Double) {
+        currentAzimuthDeg = azimuthDeg
         binding.readoutText.text = String.format(
-            Locale.US,
-            "az %05.1f  alt %+05.1f",
-            currentAzimuthDeg,
-            currentAltitudeDeg,
+            Locale.US, "az %05.1f  alt %+05.1f", azimuthDeg, altitudeDeg
         )
-    }
 
-    private fun updatePointsCount() {
-        binding.pointsCountText.text = getString(R.string.points_recorded, profile.size)
-    }
+        if (state != SurveyState.CAPTURING) return
 
-    private fun onMarkPoint() {
-        if (!hasCameraPermission()) return
-        profile.add(HorizonPoint(currentAzimuthDeg, currentAltitudeDeg))
-        binding.overlayView.flashMarked()
-        updatePointsCount()
-    }
+        val dueForCapture = panoramaBuilder.onOrientationUpdate(azimuthDeg)
+        binding.progressRingView.setTraveledDeg(panoramaBuilder.traveledDeg)
+        val remainingDeg = (360.0 - abs(panoramaBuilder.traveledDeg)).coerceAtLeast(0.0)
+        binding.remainingText.text = String.format(Locale.US, "%.0f° remaining", remainingDeg)
 
-    private fun onUndo() {
-        if (profile.removeLast() != null) {
-            updatePointsCount()
+        if (dueForCapture) {
+            binding.previewView.bitmap?.let { panoramaBuilder.addStrip(it, altitudeDeg) }
+        }
+        if (panoramaBuilder.isLoopClosed) {
+            finalizeCapture()
         }
     }
 
-    private fun onReset() {
-        if (profile.size == 0) return
+    private fun onCaptureActionClicked() {
+        when (state) {
+            SurveyState.IDLE -> {
+                panoramaBuilder.begin(currentAzimuthDeg)
+                binding.progressRingView.setActive(true)
+                binding.captureActionButton.setText(R.string.cancel_capture)
+                state = SurveyState.CAPTURING
+            }
+            SurveyState.CAPTURING -> {
+                panoramaBuilder.reset()
+                binding.progressRingView.setActive(false)
+                binding.captureActionButton.setText(R.string.start_capture)
+                state = SurveyState.IDLE
+            }
+            SurveyState.REVIEW -> Unit
+        }
+    }
+
+    private fun finalizeCapture() {
+        val panorama = panoramaBuilder.bitmap ?: return
+        state = SurveyState.REVIEW
+        binding.progressRingView.setActive(false)
+        binding.captureActionButton.setText(R.string.start_capture)
+
+        binding.panoramaImageView.setImageBitmap(panorama)
+        binding.markerOverlayView.layoutParams = binding.markerOverlayView.layoutParams.apply {
+            width = panorama.width
+            height = panorama.height
+        }
+        binding.markerOverlayView.requestLayout()
+
+        profile.clear()
+        markers.clear()
+        binding.markerOverlayView.setMarkers(markers)
+        updateReviewPointsCount()
+
+        binding.captureGroup.visibility = View.GONE
+        binding.reviewGroup.visibility = View.VISIBLE
+    }
+
+    // ------------------------------------------------------------------
+    // Review: tap-to-mark
+    // ------------------------------------------------------------------
+
+    private val reviewTapDetector by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                onPanoramaTapped(e.x, e.y)
+                return true
+            }
+        })
+    }
+
+    private fun onPanoramaTapped(viewX: Float, viewY: Float) {
+        val panorama = panoramaBuilder.bitmap ?: return
+        val xPx = viewX.roundToInt().coerceIn(0, panorama.width - 1)
+        val yPx = viewY.roundToInt().coerceIn(0, panorama.height - 1)
+        val (azimuthDeg, altitudeDeg) = panoramaBuilder.azimuthAltitudeAt(xPx, yPx, verticalFovDeg) ?: return
+
+        profile.add(HorizonPoint(azimuthDeg, altitudeDeg))
+        markers.add(xPx.toFloat() to yPx.toFloat())
+        binding.markerOverlayView.setMarkers(markers)
+
+        binding.reviewReadoutText.text = String.format(
+            Locale.US, "az %05.1f  alt %+05.1f", azimuthDeg, altitudeDeg
+        )
+        updateReviewPointsCount()
+    }
+
+    private fun onUndoMark() {
+        if (profile.removeLast() != null) {
+            if (markers.isNotEmpty()) markers.removeAt(markers.size - 1)
+            binding.markerOverlayView.setMarkers(markers)
+            updateReviewPointsCount()
+        }
+    }
+
+    private fun updateReviewPointsCount() {
+        binding.reviewPointsCountText.text = getString(R.string.points_recorded, profile.size)
+    }
+
+    private fun onRetake() {
         AlertDialog.Builder(this)
-            .setTitle(R.string.reset)
+            .setTitle(R.string.retake)
             .setMessage(getString(R.string.confirm_discard_points, profile.size))
-            .setPositiveButton(R.string.reset) { _, _ ->
+            .setPositiveButton(R.string.retake) { _, _ ->
+                panoramaBuilder.reset()
                 profile.clear()
-                updatePointsCount()
+                markers.clear()
+                binding.reviewGroup.visibility = View.GONE
+                binding.captureGroup.visibility = View.VISIBLE
+                state = SurveyState.IDLE
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -168,5 +285,9 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private companion object {
+        const val DEFAULT_VERTICAL_FOV_DEG = 55.0
     }
 }

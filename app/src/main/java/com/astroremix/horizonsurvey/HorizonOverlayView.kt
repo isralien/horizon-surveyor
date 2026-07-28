@@ -21,20 +21,6 @@ class HorizonOverlayView @JvmOverloads constructor(
         color = Color.WHITE
         strokeWidth = 3f
     }
-    private val flashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FACC15")
-        style = Paint.Style.STROKE
-        strokeWidth = 6f
-    }
-
-    private var flashUntilMs = 0L
-
-    /** Brief highlight at the crosshair confirming a point was just recorded. */
-    fun flashMarked() {
-        flashUntilMs = System.currentTimeMillis() + 220
-        postInvalidateOnAnimation()
-    }
-
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val centerX = width / 2f
@@ -45,10 +31,5 @@ class HorizonOverlayView @JvmOverloads constructor(
         val armLength = 22f
         canvas.drawLine(centerX - armLength, centerY, centerX + armLength, centerY, crosshairPaint)
         canvas.drawLine(centerX, centerY - armLength, centerX, centerY + armLength, crosshairPaint)
-
-        if (System.currentTimeMillis() < flashUntilMs) {
-            canvas.drawCircle(centerX, centerY, 36f, flashPaint)
-            postInvalidateOnAnimation()
-        }
     }
 }
