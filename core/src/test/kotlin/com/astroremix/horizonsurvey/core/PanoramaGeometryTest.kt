@@ -101,6 +101,14 @@ class PanoramaGeometryTest {
     }
 
     @Test
+    fun `degreesToPx applies the same scale to any angle, not just padding`() {
+        // 8px per degree (400px over 50 degrees), applied to a 30-degree crop.
+        assertEquals(240, PanoramaGeometry.degreesToPx(degrees = 30.0, referenceHeightPx = 400, verticalFovDeg = 50.0))
+        // A narrower reference (e.g. a smaller source crop) scales down proportionally.
+        assertEquals(120, PanoramaGeometry.degreesToPx(degrees = 30.0, referenceHeightPx = 200, verticalFovDeg = 50.0))
+    }
+
+    @Test
     fun `interpolatedSubColumns tiles the full strip width with no gaps or overlaps`() {
         val columns = PanoramaGeometry.interpolatedSubColumns(stripWidthPx = 37, maxSubColumnWidthPx = 4, fromDrawY = 0.0, toDrawY = 100.0)
         assertEquals(0, columns.first().srcXStart)

@@ -43,13 +43,21 @@ object PanoramaGeometry {
         referenceYPx - (altitudeDeg - referenceAltitudeDeg) / verticalFovDeg * stripHeightPx
 
     /**
+     * Pixel count representing [degrees] of vertical angle, given
+     * [referenceHeightPx] pixels are known to span [verticalFovDeg] --
+     * i.e. the same px-per-degree scale, applied to a different angle.
+     */
+    fun degreesToPx(degrees: Double, referenceHeightPx: Int, verticalFovDeg: Double): Int =
+        (degrees / verticalFovDeg * referenceHeightPx).roundToInt()
+
+    /**
      * Extra vertical padding (px, one side) to add above and below a strip's
      * own height so strips can be shifted to register against a shared
      * reference without any content falling off the canvas, covering up to
      * [maxPitchRangeDeg] of deviation from that reference in either direction.
      */
     fun verticalPaddingPx(maxPitchRangeDeg: Double, stripHeightPx: Int, verticalFovDeg: Double): Int =
-        (maxPitchRangeDeg / verticalFovDeg * stripHeightPx).roundToInt()
+        degreesToPx(maxPitchRangeDeg, stripHeightPx, verticalFovDeg)
 
     /** One horizontal slice of a strip, drawn at its own interpolated vertical offset. */
     data class SubColumn(val srcXStart: Int, val srcXEnd: Int, val drawY: Double)

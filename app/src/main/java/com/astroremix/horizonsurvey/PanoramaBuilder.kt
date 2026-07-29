@@ -19,6 +19,16 @@ import com.astroremix.horizonsurvey.core.PanoramaGeometry
  * an uneven horizon. (See [PanoramaGeometry], which owns this placement/lookup
  * math and is unit-tested independently of this Bitmap/Canvas glue.)
  *
+ * Each strip only keeps a [capturedFovDeg]-wide band of the camera's full
+ * vertical FOV, centered on the crosshair -- the far edges of a full-FOV
+ * frame are both the least reliable (most perspective-distorted) content and
+ * the least relevant (farthest from what the user was actually tracking), so
+ * dropping them also avoids a steep, moire-prone downscale into a short strip.
+ * That crop is scaled to a *shorter* output height than [panoramaHeightPx],
+ * kept proportional to [capturedFovDeg] so it stays on the same px-per-degree
+ * scale as the rest of the canvas -- getting this wrong would silently skew
+ * every altitude this class reports.
+ *
  * Every captured strip also produces a [Marker] at the canvas row matching
  * its own pitch reading -- the same "line the crosshair up with the horizon"
  * technique as a live tap-to-mark flow, just sampled continuously instead of
@@ -51,7 +61,15 @@ class PanoramaBuilder(
     // this back up before anything else.
     private val minCaptureIntervalMs: Long = 70,
     val panoramaHeightPx: Int = 400,
-    private val maxPitchRangeDeg: Double = 25.0,
+    // How much of the camera's vertical FOV each strip keeps, centered on
+    // the crosshair. Must be <= the camera's actual vertical FOV.
+    private val capturedFovDeg: Double = 30.0,
+    // How far (degrees) a strip's registration shift can go from where
+    // capture started before it's clamped to the canvas edge -- effectively
+    // how steep an obstacle can be tracked before losing the top of it.
+    // Generous on purpose: padding is just transparent canvas space (cheap),
+    // while clamping silently truncates real content, which is worse.
+    private val maxPitchRangeDeg: Double = 70.0,
 ) {
     class Marker(val xPx: Int, val azimuthDeg: Double) {
         var yPx: Double = 0.0
@@ -66,6 +84,7 @@ class PanoramaBuilder(
     private var lastCaptureTraveledDeg = Double.NEGATIVE_INFINITY
     private var lastCaptureTimeMs = 0L
     private var lastDrawY: Double? = null
+    private var outputStripHeightPx = panoramaHeightPx
     private val _markers = mutableListOf<Marker>()
     val markers: List<Marker> get() = _markers
 
@@ -93,6 +112,10 @@ class PanoramaBuilder(
         lastCaptureTimeMs = 0L
         lastDrawY = null
         _markers.clear()
+
+        outputStripHeightPx = PanoramaGeometry
+            .degreesToPx(capturedFovDeg, panoramaHeightPx, verticalFovDeg)
+            .coerceAtLeast(1)
 
         val paddingPx = PanoramaGeometry.verticalPaddingPx(maxPitchRangeDeg, panoramaHeightPx, verticalFovDeg)
         canvasReferenceYPx = paddingPx + panoramaHeightPx / 2.0
@@ -125,18 +148,20 @@ class PanoramaBuilder(
     }
 
     /**
-     * Crops a strip from [sourceBitmap]'s horizontal center and paints it onto
-     * the panorama, filling all the way back to the previous capture's edge so
-     * bursty pan speed never leaves a gap. The strip is shifted vertically so
-     * its content lines up against [globalReferenceAltitudeDeg], using
-     * [altitudeDeg] (the phone's current pitch) and [verticalFovDeg]. Rather
-     * than pasting the whole strip as one rigid block at that offset, it's
-     * drawn in narrow sub-columns whose vertical position ramps smoothly from
-     * where the previous strip left off to this strip's own offset -- so a
-     * jump in the pitch reading between captures shows as a gentle slope
-     * instead of a hard step, regardless of how wide the strip itself is
-     * (which depends on pan speed and the capture throttle, not something
-     * this method controls). A [Marker] is recorded at the resulting row.
+     * Crops a [capturedFovDeg]-wide vertical band from [sourceBitmap]'s
+     * horizontal center (centered on the crosshair, i.e. the source's own
+     * vertical center) and paints it onto the panorama, filling all the way
+     * back to the previous capture's edge so bursty pan speed never leaves a
+     * gap. The strip is shifted vertically so its content lines up against
+     * [globalReferenceAltitudeDeg], using [altitudeDeg] (the phone's current
+     * pitch) and [verticalFovDeg]. Rather than pasting the whole strip as one
+     * rigid block at that offset, it's drawn in narrow sub-columns whose
+     * vertical position ramps smoothly from where the previous strip left
+     * off to this strip's own offset -- so a jump in the pitch reading
+     * between captures shows as a gentle slope instead of a hard step,
+     * regardless of how wide the strip itself is (which depends on pan speed
+     * and the capture throttle, not something this method controls). A
+     * [Marker] is recorded at the resulting row.
      */
     fun addStrip(sourceBitmap: Bitmap, altitudeDeg: Double, verticalFovDeg: Double) {
         val targetCanvas = canvas ?: return
@@ -148,20 +173,24 @@ class PanoramaBuilder(
         val idealMarkerY = PanoramaGeometry.yPxForAltitude(
             altitudeDeg, globalReferenceAltitudeDeg, canvasReferenceYPx, panoramaHeightPx, verticalFovDeg,
         )
-        val drawY = (idealMarkerY - panoramaHeightPx / 2.0).coerceIn(0.0, (canvasBmp.height - panoramaHeightPx).toDouble())
-        val markerY = drawY + panoramaHeightPx / 2.0
+        val drawY = (idealMarkerY - outputStripHeightPx / 2.0).coerceIn(0.0, (canvasBmp.height - outputStripHeightPx).toDouble())
+        val markerY = drawY + outputStripHeightPx / 2.0
 
         val cropLeft = ((sourceBitmap.width - stripWidth) / 2).coerceIn(0, sourceBitmap.width - stripWidth)
-        val rawStrip = Bitmap.createBitmap(sourceBitmap, cropLeft, 0, stripWidth, sourceBitmap.height)
-        val scaledStrip = Bitmap.createScaledBitmap(rawStrip, stripWidth, panoramaHeightPx, true)
+        val cropHeight = PanoramaGeometry.degreesToPx(capturedFovDeg, sourceBitmap.height, verticalFovDeg)
+            .coerceIn(1, sourceBitmap.height)
+        val cropTop = (sourceBitmap.height - cropHeight) / 2
+
+        val rawStrip = Bitmap.createBitmap(sourceBitmap, cropLeft, cropTop, stripWidth, cropHeight)
+        val scaledStrip = Bitmap.createScaledBitmap(rawStrip, stripWidth, outputStripHeightPx, true)
 
         val fromDrawY = lastDrawY ?: drawY
         for (column in PanoramaGeometry.interpolatedSubColumns(stripWidth, SUB_COLUMN_WIDTH_PX, fromDrawY, drawY)) {
-            val srcRect = Rect(column.srcXStart, 0, column.srcXEnd, panoramaHeightPx)
+            val srcRect = Rect(column.srcXStart, 0, column.srcXEnd, outputStripHeightPx)
             val dstLeft = (prevX + column.srcXStart).toFloat()
             val dstRect = RectF(
                 dstLeft, column.drawY.toFloat(),
-                dstLeft + (column.srcXEnd - column.srcXStart), (column.drawY + panoramaHeightPx).toFloat(),
+                dstLeft + (column.srcXEnd - column.srcXStart), (column.drawY + outputStripHeightPx).toFloat(),
             )
             targetCanvas.drawBitmap(scaledStrip, srcRect, dstRect, null)
         }

@@ -163,7 +163,27 @@ worth checking on first use:
    after this round, the next lever isn't more parameter tuning, it's
    reconsidering the capture architecture (e.g. a background-thread
    `ImageAnalysis` pipeline instead of `PreviewView.getBitmap()`).
-6. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
+6. **Steep obstacles and per-strip crop.** Two related fixes from a report
+   of a very tall (~90°) nearby obstacle getting its top cropped off:
+   `maxPitchRangeDeg` (how far a strip's registration shift can go from
+   where capture started before being clamped to the canvas edge) was a
+   stingy 25°, easily exceeded by tilting the phone up to track something
+   that steep — raised to 70°. Separately, each strip now only keeps a
+   `capturedFovDeg` (30°) band of the camera's full vertical FOV centered
+   on the crosshair, instead of the whole frame — cropping out the parts
+   farthest from what was actually tracked, both the least reliable
+   (perspective-distorted) content and, per an earlier report, the likely
+   source of visible moire/banding in narrow strips. This crop only affects
+   how much of each frame is *shown*; it doesn't reduce how wide the
+   registration steps between strips are (see the previous point) — that's
+   set by the pitch reading actually changing between captures, which
+   cropping doesn't touch. Getting the crop and its output scale out of
+   sync would silently skew every exported altitude, so `addStrip()` keeps
+   both proportional to `capturedFovDeg` via the same
+   `PanoramaGeometry.degreesToPx` helper — worth double-checking first
+   (compare a dragged point's live readout against the same spot's live
+   reading during capture) if altitudes look off after this change.
+7. **AE/AWB lock.** Capture locks auto-exposure and auto-white-balance
    (`CONTROL_AE_LOCK` / `CONTROL_AWB_LOCK` via Camera2 interop) to stop
    consecutive strips from visibly banding as the camera's exposure drifts
    mid-pan. This should be broadly supported, but isn't verified on real
